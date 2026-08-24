@@ -1,0 +1,37 @@
+# dsh-voice-companion bundle patch：把语音插件的 host 行与 client 行挂进宿主 DSH 的 Loader。
+#
+# 作为 profile 层（dsh.bundle.patch）被 include 挂载后，这些行进入 Loader 树；
+# client-modules 会扫描带 `dsh.client` 声明的 entry（client 行用根包名，故只有
+# 它命中 dsh.client；host 行走 ./server 子路径，不会被误判为 client）。
+#
+# 敏感配置（API Base URL / API Key）不在此文件：凭据从进程环境变量或
+# dsh-home 专用 secrets 文件读取（见 README「凭据」）。Profile 用户层可按
+# 相同 id 覆写下列非敏感 config。
+
+- insert:
+    - id: voice-companion-server
+      name: '@oldsan888/dsh-voice-companion/server'
+      config:
+        provider: 'mimo'
+        model: 'mimo-v2.5-tts-voiceclone'
+        designModel: 'mimo-v2.5-tts-voicedesign'
+        speed: 1
+        maxLineChars: 150
+        askMaxChars: 80
+        queueLimit: 8
+        requestTimeoutMs: 60000
+        maxAudioBytes: 8388608
+        leaseTtlMs: 6000
+        maxDesignCandidates: 3
+        maxDesignPromptChars: 300
+        promptEnabled: true
+        # Phase 4：飞书语音投递（可选适配器）。未启用时核心网页 TTS 零依赖。
+        # 凭据由 lark-cli 独立管理（不在此处、不与 MiMo key 混用）；外发仍须工具 confirm。
+        larkEnabled: false
+        larkMaxAttempts: 3
+        larkRetryBaseMs: 500
+        larkSendTimeoutMs: 30000
+        larkTranscodeTimeoutMs: 30000
+
+    - id: voice-companion-ui
+      name: '@oldsan888/dsh-voice-companion'
