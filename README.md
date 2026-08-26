@@ -25,21 +25,54 @@ node --import tsx/esm apps/cli/src/bin.ts plugin --profile web add "file:<plugin
 
 ## 配置
 
-MiMo TTS 需要以下环境变量，或等价地写入 `<DSH_HOME>/secrets/dsh-voice-companion.env`：
+### MiMo TTS 凭据（必须）
+
+插件直连小米 MiMo TTS。必须同时提供下面两个变量，缺一不可：
 
 | 变量 | 说明 |
 | --- | --- |
-| `DSH_VOICE_MIMO_API_BASE_URL` | MiMo API Base URL（不含 `/chat/completions`） |
-| `DSH_VOICE_MIMO_API_KEY` | MiMo API Key |
+| `DSH_VOICE_MIMO_API_BASE_URL` | MiMo API Base URL。仅 `http`/`https`，不要带 query/fragment，也不要带 `/chat/completions` 后缀。结尾斜杠会被去掉。 |
+| `DSH_VOICE_MIMO_API_KEY` | MiMo API Key。 |
+
+提供方式二选一（可混用；**进程环境变量优先于 secrets 文件**）：
+
+#### 方式 A：进程环境变量
+
+把两个变量写入 DSH 进程环境。若用 DSH Web 控制器启动，写入控制器配置里的 `envFile`（常见为 `$DSH_HOME/dsh-web.env`）：
 
 ```dotenv
 DSH_VOICE_MIMO_API_BASE_URL=https://your-endpoint.example.com/v4
 DSH_VOICE_MIMO_API_KEY=your-api-key-here
 ```
 
-环境变量优先于 secrets 文件。请勿将凭据提交到 Git；插件不会将凭据写入日志、HTTP 响应或浏览器。
+保存后重启 DSH Web。
 
-`cordis.patch.yml` 包含非敏感默认配置，例如模型、语速、队列上限、请求超时和音频大小上限。飞书投递默认可关闭；启用时凭据由本机 `lark-cli` 管理，不与 MiMo 凭据混用。
+#### 方式 B：dsh-home secrets 文件（推荐）
+
+只把文件放到 `$DSH_HOME/secrets/` **不够**：插件默认**不会**自动读取该文件。必须同时在 **profile 层**（`$DSH_HOME/profiles/web/cordis.patch.yml`）声明 `secretsFile`。不要把路径写进插件仓库或安装目录里的 `cordis.patch.yml`——那是 bundle 默认层，下次同步安装产物会覆盖本机配置。
+
+1. 创建 `$DSH_HOME/secrets/dsh-voice-companion.env`（内容同上面的 `KEY=VALUE`；支持 `#` 注释、`export` 前缀、成对引号）。
+2. 在 `$DSH_HOME/profiles/web/cordis.patch.yml` 追加：
+
+```yaml
+- id: voice-companion-server
+  config:
+    secretsFile: !!js dshHomePath('secrets/dsh-voice-companion.env')
+```
+
+`secretsFile` 必须位于 `DSH_HOME` 内；越界路径会被拒绝。
+
+3. 重启 DSH Web。
+
+若面板或日志出现「凭据未配置：需要 DSH_VOICE_MIMO_API_BASE_URL 与 DSH_VOICE_MIMO_API_KEY（环境变量或 dsh-home secrets 文件）」：进程环境没有这两个变量，且未配置 `secretsFile`（或文件缺失 / 键不齐）。
+
+请勿将凭据提交到 Git；插件不会把凭据写入日志、HTTP 响应或浏览器。
+
+### 非敏感默认（可选覆写）
+
+插件自带的 `cordis.patch.yml` 只含非敏感默认：`provider`（仅 `mimo`）、复刻 / 设计 / 流式模型名、语速、队列上限、超时、音频大小上限等。要改这些值，同样在 profile 层按 `id: voice-companion-server` 覆写，不要改安装目录里的 bundle 拷贝。
+
+飞书投递默认可关闭；启用时凭据由本机 `lark-cli` 管理，不与 MiMo 凭据混用。
 
 ## 使用
 
