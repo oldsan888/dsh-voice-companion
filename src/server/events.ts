@@ -205,7 +205,7 @@ export function extractDoneSpoken(
  * 绝不携带堆栈、路径或上游原文。
  */
 export function buildFailText(): string {
-  return '老三，刚才出了点状况。你先看看文字详情，我继续排查。'
+  return '刚才的任务出了点状况，请查看文字详情，我会继续排查。'
 }
 
 /**

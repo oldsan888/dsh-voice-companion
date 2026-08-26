@@ -22,6 +22,12 @@ export class VoicePlayer {
   private context: AudioContext | undefined
   private gain: GainNode | undefined
   private currentSource: AudioBufferSourceNode | undefined
+  /**
+   * 全部尚未结束的已排程 source（序列播放会同时排程多段未来播放的 source）。
+   * stopCurrent 必须停掉整个集合——只停 currentSource 会留下"幽灵音频"：
+   * 静音/清空后已排程的后续段仍会继续出声。
+   */
+  private readonly liveSources = new Set<AudioBufferSourceNode>()
   private currentResolve: ((outcome: PlayerPlayOutcome) => void) | undefined
   /** 当前正在播放的 priority；-1 = 空闲。 */
   private currentPriority = -1
@@ -85,6 +91,7 @@ export class VoicePlayer {
     return new Promise(resolve => {
       this.currentResolve = resolve
       source.onended = () => {
+        this.liveSources.delete(source)
         if (this.currentSource !== source) return
         this.currentSource = undefined
         this.currentPriority = -1
@@ -92,23 +99,25 @@ export class VoicePlayer {
         resolve({ started: true })
       }
       this.currentSource = source
+      this.liveSources.add(source)
       this.currentPriority = priority
       source.start()
     })
   }
 
-  /** 停止当前播放（静音/清空/卸载/抢占时）。 */
+  /** 停止全部已排程播放（静音/清空/卸载/抢占时）。 */
   stopCurrent(): void {
     this.epoch++
-    if (this.currentSource !== undefined) {
+    for (const source of this.liveSources) {
       try {
-        this.currentSource.onended = null
-        this.currentSource.stop()
+        source.onended = null
+        source.stop()
       } catch {
         // 已停止的 source 再 stop 会 throw，忽略。
       }
-      this.currentSource = undefined
     }
+    this.liveSources.clear()
+    this.currentSource = undefined
     this.currentPriority = -1
     const resolve = this.currentResolve
     this.currentResolve = undefined
@@ -141,11 +150,24 @@ export class VoicePlayer {
     let resolve: ((outcome: PlayerPlayOutcome) => void) | undefined
     const outcome = new Promise<PlayerPlayOutcome>(done => { resolve = done })
 
+    const finish = (result: PlayerPlayOutcome): void => {
+      if (this.currentResolve === interruptedResolve) this.currentResolve = undefined
+      const r = resolve
+      resolve = undefined
+      r?.(result)
+    }
+    /**
+     * 注册到 currentResolve：stopCurrent（静音/清空/抢占/卸载）会调用它。
+     * 否则当全部段已排程完（循环退出）后再被 stopCurrent 打断时，
+     * 已排程 source 的 onended 已被置空，本 Promise 将永远悬挂，
+     * 播放循环随之死锁（后续事件永不再播）。
+     */
+    const interruptedResolve = (): void => finish({ started: startedAny, reason: 'interrupted' })
+    this.currentResolve = interruptedResolve
+
     const abortIfNeeded = (): boolean => {
       if (signal?.aborted || this.epoch !== epoch) {
-        const r = resolve
-        resolve = undefined
-        r?.({ started: startedAny, reason: 'interrupted' })
+        finish({ started: startedAny, reason: 'interrupted' })
         return true
       }
       return false
@@ -178,18 +200,20 @@ export class VoicePlayer {
       }
       source.connect(output)
       source.onended = () => {
+        this.liveSources.delete(source)
         if (this.epoch !== epoch) return
         if (this.currentSource === source) {
           this.currentSource = undefined
           this.currentPriority = -1
         }
-        if (streamEnded) {
-          const r = resolve
-          resolve = undefined
-          r?.({ started: true })
+        // 全部段排程完毕且没有仍在播/待播的 source 才算播放完成，
+        // 避免前段结束时后段还在播就提前 resolve。
+        if (streamEnded && this.liveSources.size === 0) {
+          finish({ started: true })
         }
       }
       this.currentSource = source
+      this.liveSources.add(source)
       this.currentPriority = priority
       if (!startedAny) startedAny = true
       source.start(nextStart)
@@ -197,13 +221,12 @@ export class VoicePlayer {
     }
     streamEnded = true
     if (!startedAny) {
-      const r = resolve
-      resolve = undefined
-      r?.({ started: false, reason: 'decode-failed' })
+      finish({ started: false, reason: 'decode-failed' })
     } else if (this.epoch !== epoch || (signal?.aborted ?? false)) {
-      const r = resolve
-      resolve = undefined
-      r?.({ started: true, reason: 'interrupted' })
+      finish({ started: true, reason: 'interrupted' })
+    } else if (this.liveSources.size === 0) {
+      // 极短音频可能在循环结束前就全部 onended：此处兜底避免悬挂。
+      finish({ started: true })
     }
     return outcome
   }

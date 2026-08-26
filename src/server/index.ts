@@ -193,6 +193,8 @@ export function apply(ctx: Context, rawConfig: unknown = {}, overrides: ApplyOve
   const turnKey = (session: unknown, turn: number): string => `${sessionIdOf(session)}#${turn}`
 
   const rememberTurnKey = (key: string): void => {
+    // 已存在的 key 是覆盖写，不增加容量，不应误逐出别的轮次缓存。
+    if (lastMessageByTurn.has(key)) return
     if (lastMessageByTurn.size >= TURN_KEY_LIMIT) {
       const oldest = lastMessageByTurn.keys().next().value
       if (oldest !== undefined) lastMessageByTurn.delete(oldest)

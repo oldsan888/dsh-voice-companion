@@ -3,7 +3,7 @@
  * 默认收起为胶囊；展开后提供解锁/静音/音量/试听/清空/接管与诊断。
  * 仅 leader 标签页执行 400ms drain；页面隐藏时释放租约并停止轮询。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { PANEL_SLOT_ID } from '../shared/constants.ts'
 import { splitSentences } from '../shared/split.ts'
 import { activateProfile, clearQueue, drain, getProfileReference, getState, listProfiles, postLease, requestTestVoice, requestTts, requestTtsStream, rollbackProfile, VoiceStreamError } from './api.ts'
@@ -64,7 +64,10 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
   const [activityPhase, setActivityPhase] = useState<AudioActivityPhase | undefined>(undefined)
   const [mutedDropped, setMutedDropped] = useState(0)
   const [showDetails, setShowDetails] = useState(false)
-  const [expanded, setExpanded] = useState(false)
+  // 展开状态持久化：collapsed 偏好曾是死字段（只写不读），现在接线。
+  const [expanded, setExpanded] = useState(() => !loadPreferences().collapsed)
+  /** 拖动进行中（超过阈值后为 true；用于光标样式与禁用过渡）。 */
+  const [dragging, setDragging] = useState(false)
 
   // ---- 音色 Profile（Phase 1）----
   const [profiles, setProfiles] = useState<VoiceProfileSummary[]>([])
@@ -84,6 +87,18 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
   const playerRef = useRef<VoicePlayer | undefined>(undefined)
   const prefsRef = useRef(prefs)
   prefsRef.current = prefs
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const dragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    originX: number
+    originY: number
+    moved: boolean
+    lastPos?: { x: number; y: number }
+  } | undefined>(undefined)
+  /** 拖动结束后抑制紧随其后的 click（避免拖完误展开面板）。 */
+  const suppressClickRef = useRef(false)
   const leaderRef = useRef(false)
   const pumpingRef = useRef(false)
   const audioAbortRef = useRef<AbortController | undefined>(undefined)
@@ -370,7 +385,18 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
       }
     }
     const renew = async (): Promise<void> => {
-      if (disposed || document.hidden || !leaderRef.current) return
+      if (disposed || document.hidden) return
+      if (!leaderRef.current) {
+        // leader 标签页可能已崩溃/关闭而没来得及 release：
+        // 可见的非 leader 页周期性重试 acquire，租约到期后自动接回播放权，
+        // 不再依赖用户手动切换标签页可见性或点击"接管"。
+        const outcome = await api.postLease('acquire', clientId)
+        if (!disposed && outcome.ok && outcome.value.lease.youAreOwner) {
+          leaderRef.current = true
+          setIsLeader(true)
+        }
+        return
+      }
       const outcome = await api.postLease('renew', clientId)
       if (disposed) return
       if (!outcome.ok || !outcome.value.lease.youAreOwner) {
@@ -565,13 +591,94 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
 
   const expandPanel = useCallback((): void => {
     setExpanded(true)
-    updatePrefs({ onboardingSeen: true })
+    updatePrefs({ onboardingSeen: true, collapsed: false })
   }, [updatePrefs])
 
   const collapsePanel = useCallback((): void => {
     setExpanded(false)
-    updatePrefs({ onboardingSeen: true })
+    updatePrefs({ onboardingSeen: true, collapsed: true })
   }, [updatePrefs])
+
+  // ---- 自由拖动（胶囊整体可拖；面板以头部为把手）----
+  /** 把候选位置钳制在视口内（8px 边距；面板/胶囊尺寸实时测量）。 */
+  const clampPos = useCallback((x: number, y: number): { x: number; y: number } => {
+    const margin = 8
+    const element = rootRef.current
+    const width = element?.offsetWidth || 120
+    const height = element?.offsetHeight || 44
+    const maxX = Math.max(margin, window.innerWidth - width - margin)
+    const maxY = Math.max(margin, window.innerHeight - height - margin)
+    return {
+      x: Math.round(Math.min(Math.max(x, margin), maxX)),
+      y: Math.round(Math.min(Math.max(y, margin), maxY)),
+    }
+  }, [])
+
+  const onDragPointerDown = useCallback((event: React.PointerEvent<HTMLElement>): void => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    // 把手内的交互元素（如面板收起按钮）不触发拖动。
+    if ((event.target as HTMLElement).closest('[data-vcp-nodrag]') !== null) return
+    const rect = rootRef.current?.getBoundingClientRect()
+    if (rect === undefined) return
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: rect.left,
+      originY: rect.top,
+      moved: false,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }, [])
+
+  const onDragPointerMove = useCallback((event: React.PointerEvent<HTMLElement>): void => {
+    const drag = dragRef.current
+    if (drag === undefined || event.pointerId !== drag.pointerId) return
+    const dx = event.clientX - drag.startX
+    const dy = event.clientY - drag.startY
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return
+    if (!drag.moved) {
+      // 4px 阈值区分点击与拖动。
+      if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return
+      drag.moved = true
+      setDragging(true)
+    }
+    const next = clampPos(drag.originX + dx, drag.originY + dy)
+    drag.lastPos = next
+    // 拖动过程只更新内存状态；localStorage 在 pointerup 时写一次。
+    setPrefs(previous => ({ ...previous, panelPos: next }))
+  }, [clampPos])
+
+  const onDragPointerEnd = useCallback((event: React.PointerEvent<HTMLElement>): void => {
+    const drag = dragRef.current
+    if (drag === undefined || event.pointerId !== drag.pointerId) return
+    dragRef.current = undefined
+    setDragging(false)
+    if (drag.moved) {
+      suppressClickRef.current = true
+      if (drag.lastPos !== undefined) updatePrefs({ panelPos: drag.lastPos })
+    }
+  }, [updatePrefs])
+
+  // 视口尺寸变化时把已固定的位置重新钳回可见区域。
+  useEffect(() => {
+    const onResize = (): void => {
+      const pos = prefsRef.current.panelPos
+      if (pos === undefined) return
+      const next = clampPos(pos.x, pos.y)
+      if (next.x !== pos.x || next.y !== pos.y) updatePrefs({ panelPos: next })
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [clampPos, updatePrefs])
+
+  // 展开/收起后尺寸变化（胶囊 → 336px 面板），同样需要钳回视口。
+  useLayoutEffect(() => {
+    const pos = prefsRef.current.panelPos
+    if (pos === undefined) return
+    const next = clampPos(pos.x, pos.y)
+    if (next.x !== pos.x || next.y !== pos.y) updatePrefs({ panelPos: next })
+  }, [expanded, clampPos, updatePrefs])
 
   // ---- 派生显示 ----
   const ttsStatus = serverState?.tts.status
@@ -588,8 +695,9 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
             : ttsStatus === 'unconfigured'
               ? '⚠ TTS 未配置'
               : '⚠ TTS 离线'
-  const pillDotClass = !audioReady || prefs.muted
-    ? 'vcp-dot'
+  // 静音/未解锁不该显示绿色"正常"圆点：静音与待启用用中性灰。
+  const pillDotClass = prefs.muted || !audioReady
+    ? 'vcp-dot idle'
     : ttsStatus === 'ready' ? 'vcp-dot' : 'vcp-dot warn'
 
   const counts = serverState?.counts
@@ -618,7 +726,13 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
   const profilesDisabled = !isLeader || anyProfileBusy
 
   return (
-    <div className='vcp-root'>
+    <div
+      className={`vcp-root${dragging ? ' dragging' : ''}`}
+      ref={rootRef}
+      style={prefs.panelPos !== undefined
+        ? { left: prefs.panelPos.x, top: prefs.panelPos.y, right: 'auto', bottom: 'auto' }
+        : undefined}
+    >
       {!prefs.onboardingSeen && (
         <div className='vcp-onboarding' data-testid='voice-onboarding'>
           <strong>让 DSH 开口说话</strong>
@@ -633,7 +747,14 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
       )}
       {expanded ? (
         <div className='vcp-panel' data-testid='voice-panel'>
-          <div className='vcp-head'>
+          <div
+            className='vcp-head'
+            onPointerDown={onDragPointerDown}
+            onPointerMove={onDragPointerMove}
+            onPointerUp={onDragPointerEnd}
+            onPointerCancel={onDragPointerEnd}
+            title='按住拖动面板'
+          >
             <span className='vcp-brandmark' aria-hidden='true'>
               <i /><i /><i /><i /><i />
             </span>
@@ -645,7 +766,7 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
               <span className='vcp-dot' />
               {isLeader ? '本页播放' : '另一个标签页播放'}
             </span>
-            <button type='button' className='vcp-icon-btn' onClick={collapsePanel} title='收起' aria-label='收起面板'>
+            <button type='button' className='vcp-icon-btn' data-vcp-nodrag onClick={collapsePanel} title='收起' aria-label='收起面板'>
               <span aria-hidden='true'>×</span><span className='vcp-sr-only'>收起</span>
             </button>
           </div>
@@ -842,7 +963,19 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
       ) : (
         <button
           type='button' className='vcp-pill' data-testid='voice-pill' id={PANEL_SLOT_ID}
-          onClick={expandPanel} title='语音插件'
+          onPointerDown={onDragPointerDown}
+          onPointerMove={onDragPointerMove}
+          onPointerUp={onDragPointerEnd}
+          onPointerCancel={onDragPointerEnd}
+          onClick={() => {
+            // 拖动结束后的合成 click 不展开面板。
+            if (suppressClickRef.current) {
+              suppressClickRef.current = false
+              return
+            }
+            expandPanel()
+          }}
+          title='语音插件（可拖动）'
         >
           <span className='vcp-brandmark' aria-hidden='true'><i /><i /><i /><i /><i /></span>
           <span className='vcp-pill-label' data-testid='voice-pill-label'>{pillText}</span>

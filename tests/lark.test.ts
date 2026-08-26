@@ -51,7 +51,7 @@ describe('纯函数', () => {
 
   it('isValidChatId：合法前缀通过，注入形态拒绝', () => {
     expect(isValidChatId('oc_test_group_0001')).toBe(true)
-    expect(isValidChatId('ou_c949e2ffd5baf6bd94dd665d20cb2586')).toBe(true)
+    expect(isValidChatId('ou_test_user_00000000000000000001')).toBe(true)
     expect(isValidChatId('om_testmessage0001')).toBe(true)
     expect(isValidChatId('')).toBe(false)
     expect(isValidChatId('oc_abc def')).toBe(false)
@@ -135,7 +135,7 @@ function makeHarness(overrides?: {
 describe('createLarkDelivery 端到端（注入 runSpawn）', () => {
   it('成功：probe ready → 转码 → 时长校验 → 发送 → 成功即删 + 脱敏审计', async () => {
     const { delivery, dir, auditPath, calls } = makeHarness()
-    const result = await delivery.sendSpeech({ wav: wavBuffer(), text: '你好老三，语音外发测试', chatId: 'oc_test_group_0001' })
+    const result = await delivery.sendSpeech({ wav: wavBuffer(), text: '你好，这是语音外发测试', chatId: 'oc_test_group_0001' })
     expect(result.ok).toBe(true)
     expect(result.status).toBe('sent')
     expect(result.messageId).toBe('om_test123')
@@ -156,7 +156,7 @@ describe('createLarkDelivery 端到端（注入 runSpawn）', () => {
     expect(record.status).toBe('sent')
     expect(record.ok).toBe(true)
     expect(record.chat).toBe('oc_test_group_0001')
-    expect(JSON.stringify(record)).not.toContain('你好老三')
+    expect(JSON.stringify(record)).not.toContain('语音外发测试')
     expect(JSON.stringify(record)).not.toContain('token')
     expect(JSON.stringify(record)).not.toContain('Dk-')
   })
@@ -370,10 +370,10 @@ describe('index 工具：voice_send_to_lark', () => {
     const tool = host.tools.find((candidate) => (candidate as { name?: string }).name === 'voice_send_to_lark') as {
       execute: (args: Record<string, unknown>) => Promise<Record<string, unknown>>
     }
-    const result = await tool.execute({ message: '你好老三', confirm: true })
+    const result = await tool.execute({ message: '你好，外发测试', confirm: true })
     expect(result.ok).toBe(true)
     expect(result.status).toBe('sent')
-    expect(synthesizedText).toBe('你好老三')
+    expect(synthesizedText).toBe('你好，外发测试')
     expect(sent).toHaveLength(1)
     expect(sent[0]?.chatId).toBe('oc_test_group_0001')
   })
@@ -405,7 +405,7 @@ describe('index 工具：voice_send_to_lark', () => {
     const bad = await toolOf('voice_send_to_lark').execute({ message: 'hi', confirm: true, chatId: 'oc_x; rm -rf' })
     expect(bad.ok).toBe(false)
     expect(bad.status).toBe('invalid-chat-id')
-    const good = await toolOf('voice_send_to_lark').execute({ message: 'hi', confirm: true, chatId: 'ou_c949e2ffd5baf6bd94dd665d20cb2586' })
+    const good = await toolOf('voice_send_to_lark').execute({ message: 'hi', confirm: true, chatId: 'ou_test_user_00000000000000000001' })
     expect(good.ok).toBe(true)
   })
 

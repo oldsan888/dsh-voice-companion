@@ -185,7 +185,7 @@ describe('extractDoneSpoken', () => {
 describe('buildFailText', () => {
   it('固定话术不携带宿主错误内容', () => {
     const text = buildFailText()
-    expect(text).toContain('老三，刚才出了点状况')
+    expect(text).toContain('出了点状况')
     expect(text).not.toContain('secret')
     expect(text).not.toContain('private')
     expect(text).not.toContain('E_UNKNOWN')

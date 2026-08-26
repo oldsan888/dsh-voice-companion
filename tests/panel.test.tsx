@@ -5,6 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { VoiceCompanionPanel } from '../src/client/VoiceCompanionPanel.tsx'
 import { VoiceStreamError } from '../src/client/api.ts'
 
+// jsdom 无 PointerEvent：垫片继承 MouseEvent 以保留 clientX/clientY，供拖动测试使用。
+if (typeof window !== 'undefined' && (window as unknown as { PointerEvent?: unknown }).PointerEvent === undefined) {
+  class PointerEventShim extends MouseEvent {
+    readonly pointerId: number
+    readonly pointerType: string
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init)
+      this.pointerId = init.pointerId ?? 0
+      this.pointerType = init.pointerType ?? ''
+    }
+  }
+  ;(window as unknown as { PointerEvent: unknown }).PointerEvent = PointerEventShim
+}
+
 type ApiShape = {
   postLease: ReturnType<typeof vi.fn>
   drain: ReturnType<typeof vi.fn>
@@ -227,7 +241,8 @@ describe('静音 / 音量 / 清空', () => {
       })),
     })
     render(<VoiceCompanionPanel apiOverride={api as never} intervals={{ drainMs: 20, renewMs: 60_000, stateMs: 60_000 }} />)
-    fireEvent.click(screen.getByTestId('voice-pill'))
+    // collapsed:false → 面板初始即展开（展开状态持久化）。
+    expect(screen.getByTestId('voice-panel')).toBeTruthy()
     await waitFor(() => expect(screen.getAllByText(/静音丢弃 1/).length).toBeGreaterThan(0), { timeout: 3000 })
     expect(api.requestTts).not.toHaveBeenCalled()
   })
@@ -313,6 +328,37 @@ describe('高优先级打断（player 规则）', () => {
     const player = await makePlayer()
     player.setVolume(5)
     player.setVolume(-3)
+    await player.dispose()
+  })
+
+  it('序列播放：stopCurrent 停掉全部已排程 source（不留幽灵音频），排程完毕后打断也能 resolve', async () => {
+    const sources: FakeSourceNode[] = []
+    class SeqContext extends FakeAudioContext {
+      currentTime = 0
+      createBufferSource() {
+        const source = new FakeSourceNode()
+        sources.push(source)
+        return source
+      }
+      async decodeAudioData(): Promise<AudioBuffer> { return { duration: 0.5 } as AudioBuffer }
+    }
+    ;(window as unknown as { AudioContext?: unknown }).AudioContext = SeqContext
+    const mod = await import('../src/client/player.ts')
+    const player = new mod.VoicePlayer()
+    await player.unlock()
+    async function* segments(): AsyncGenerator<ArrayBuffer> {
+      yield new ArrayBuffer(8)
+      yield new ArrayBuffer(8)
+      yield new ArrayBuffer(8)
+    }
+    const promise = player.playWavSequence(segments(), 2)
+    // 等循环把三段全部 decode 并排程。
+    await waitFor(() => expect(sources).toHaveLength(3))
+    // 打断：三段（含未来排程的两段）必须全部被 stop，Promise 必须 resolve 而非悬挂。
+    player.stopCurrent()
+    for (const source of sources) expect(source.stopped).toBe(1)
+    const outcome = await promise
+    expect(outcome).toEqual({ started: true, reason: 'interrupted' })
     await player.dispose()
   })
 
@@ -618,7 +664,8 @@ describe('Phase 3：速度优先模式与句子级流水（播放模式）', () 
       requestTts: vi.fn(async () => ({ ok: true as const, value: new ArrayBuffer(8) })),
     })
     render(<VoiceCompanionPanel apiOverride={api as never} intervals={{ drainMs: 20, renewMs: 60_000, stateMs: 60_000 }} />)
-    fireEvent.click(screen.getByTestId('voice-pill'))
+    // collapsed:false → 初始即展开。
+    expect(screen.getByTestId('voice-panel')).toBeTruthy()
     await waitFor(() => expect(requestTtsStream).toHaveBeenCalledTimes(1), { timeout: 3000 })
     expect(api.requestTts).not.toHaveBeenCalled()
     // 面板显示当前模式：速度优先。
@@ -646,7 +693,8 @@ describe('Phase 3：速度优先模式与句子级流水（播放模式）', () 
     })
     render(<VoiceCompanionPanel apiOverride={api as never} intervals={{ drainMs: 20, renewMs: 60_000, stateMs: 60_000 }} />)
     fireEvent.click(screen.getByTestId('voice-onboarding-enable'))
-    fireEvent.click(screen.getByTestId('voice-pill'))
+    // collapsed:false → 初始即展开，无需点胶囊。
+    expect(screen.getByTestId('voice-panel')).toBeTruthy()
     await waitFor(() => expect(screen.getAllByText(/流式合成失败\[TTS_REJECTED\]/).length).toBeGreaterThan(0), { timeout: 3000 })
     expect(api.requestTts).not.toHaveBeenCalled()
   })
@@ -655,12 +703,61 @@ describe('Phase 3：速度优先模式与句子级流水（播放模式）', () 
     window.localStorage.setItem('dsh.voice-companion.preferences.v1', JSON.stringify({ muted: false, volume: 0.9, collapsed: false, onboardingSeen: true, mode: 'identity' }))
     const api = okApi({})
     render(<VoiceCompanionPanel apiOverride={api as never} intervals={{ drainMs: 10_000, renewMs: 10_000, stateMs: 10_000 }} />)
-    fireEvent.click(screen.getByTestId('voice-pill'))
+    // collapsed:false → 初始即展开。
+    expect(screen.getByTestId('voice-panel')).toBeTruthy()
     expect(screen.getByTestId('voice-mode-label').textContent).toContain('身份优先')
     fireEvent.click(screen.getByTestId('voice-mode-toggle'))
     expect(screen.getByTestId('voice-mode-label').textContent).toContain('速度优先')
     const saved = JSON.parse(window.localStorage.getItem('dsh.voice-companion.preferences.v1') ?? '{}') as { mode: string }
     expect(saved.mode).toBe('speed')
+  })
+
+  it('展开状态持久化：展开后卸载重挂仍是展开（collapsed 偏好接线）', () => {
+    const api = okApi()
+    const first = render(<VoiceCompanionPanel apiOverride={api as never} intervals={{ drainMs: 10_000, renewMs: 10_000, stateMs: 10_000 }} />)
+    fireEvent.click(screen.getByTestId('voice-pill'))
+    expect(screen.getByTestId('voice-panel')).toBeTruthy()
+    first.unmount()
+    const saved = JSON.parse(window.localStorage.getItem('dsh.voice-companion.preferences.v1')!) as { collapsed?: boolean }
+    expect(saved.collapsed).toBe(false)
+    render(<VoiceCompanionPanel apiOverride={api as never} intervals={{ drainMs: 10_000, renewMs: 10_000, stateMs: 10_000 }} />)
+    expect(screen.getByTestId('voice-panel')).toBeTruthy()
+  })
+
+  it('拖动胶囊：位置持久化到偏好、根节点切换为 left/top 定位，拖后合成 click 不误展开', () => {
+    const api = okApi()
+    render(<VoiceCompanionPanel apiOverride={api as never} intervals={{ drainMs: 10_000, renewMs: 10_000, stateMs: 10_000 }} />)
+    const pill = screen.getByTestId('voice-pill')
+    const root = pill.parentElement as HTMLElement
+
+    fireEvent.pointerDown(pill, { pointerId: 1, button: 0, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(pill, { pointerId: 1, clientX: 160, clientY: 140 })
+    fireEvent.pointerUp(pill, { pointerId: 1, clientX: 160, clientY: 140 })
+
+    // jsdom 中 getBoundingClientRect 为 0，因此新位置 = 位移量（已钳制到 ≥8px 边距）。
+    expect(root.style.left).toBe('60px')
+    expect(root.style.top).toBe('40px')
+    const saved = JSON.parse(window.localStorage.getItem('dsh.voice-companion.preferences.v1')!) as { panelPos?: { x: number; y: number } }
+    expect(saved.panelPos).toEqual({ x: 60, y: 40 })
+
+    // 拖动后的合成 click 被抑制，不展开面板；再次正常点击才展开。
+    fireEvent.click(pill)
+    expect(screen.queryByTestId('voice-panel')).toBeNull()
+    fireEvent.click(pill)
+    expect(screen.getByTestId('voice-panel')).toBeTruthy()
+  })
+
+  it('微小位移（<4px）视为点击：不改变位置，正常展开', () => {
+    const api = okApi()
+    render(<VoiceCompanionPanel apiOverride={api as never} intervals={{ drainMs: 10_000, renewMs: 10_000, stateMs: 10_000 }} />)
+    const pill = screen.getByTestId('voice-pill')
+    const root = pill.parentElement as HTMLElement
+    fireEvent.pointerDown(pill, { pointerId: 1, button: 0, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(pill, { pointerId: 1, clientX: 102, clientY: 101 })
+    fireEvent.pointerUp(pill, { pointerId: 1, clientX: 102, clientY: 101 })
+    expect(root.style.left).toBe('')
+    fireEvent.click(pill)
+    expect(screen.getByTestId('voice-panel')).toBeTruthy()
   })
 
   it('身份优先多句文本：逐句合成（句子级流水），全部句都播', async () => {

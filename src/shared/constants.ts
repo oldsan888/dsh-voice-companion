@@ -47,8 +47,8 @@ export const DEDUPE_TTL_MS = 10 * 60 * 1000
 /** JSON 请求体上限（字节）。 */
 export const BODY_LIMIT_BYTES = 16 * 1024
 
-/** 试听固定文本。 */
-export const TEST_TEXT = '你好老三，我是阿呆，语音试听成功，链路一切正常。'
+/** 试听固定文本（中性文案，不含人名等个人痕迹）。 */
+export const TEST_TEXT = '你好，我是语音助手，试听成功，链路一切正常。'
 
 /** localStorage 偏好键（带版本）。 */
 export const PREFERENCES_KEY = 'dsh.voice-companion.preferences.v1'

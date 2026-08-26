@@ -44,6 +44,7 @@ export const PANEL_CSS = `
   color: var(--vcp-text);
   cursor: pointer;
   user-select: none;
+  touch-action: none;
   white-space: nowrap;
   max-width: calc(100vw - 32px);
   overflow: hidden;
@@ -54,7 +55,12 @@ export const PANEL_CSS = `
   border-color: rgba(109, 93, 252, .22);
   box-shadow: 0 22px 52px rgba(20, 22, 32, .19), 0 4px 14px rgba(20, 22, 32, .09);
 }
-.vcp-pill-label { font-weight: 620; letter-spacing: .01em; }
+.vcp-root.dragging .vcp-pill {
+  cursor: grabbing;
+  transform: none;
+  transition: none;
+}
+.vcp-pill-label { font-weight: 600; letter-spacing: .01em; }
 .vcp-sr-only {
   position: absolute;
   width: 1px;
@@ -89,7 +95,11 @@ export const PANEL_CSS = `
   gap: 11px;
   padding: 15px 15px 13px;
   border-bottom: 1px solid var(--vcp-divider);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
+.vcp-root.dragging .vcp-head { cursor: grabbing; }
 .vcp-brandmark {
   display: flex;
   align-items: center;
@@ -113,7 +123,7 @@ export const PANEL_CSS = `
 .vcp-brandmark i:nth-child(2), .vcp-brandmark i:nth-child(4) { height: 13px; opacity: .88; }
 .vcp-brandmark i:nth-child(3) { height: 18px; }
 .vcp-heading { min-width: 0; flex: 1; }
-.vcp-title { font-weight: 680; font-size: 14px; letter-spacing: -.01em; }
+.vcp-title { font-weight: 700; font-size: 14px; letter-spacing: -.01em; }
 .vcp-subtitle { margin-top: 1px; color: var(--vcp-muted); font-size: 11px; }
 .vcp-leader {
   display: inline-flex;
@@ -168,7 +178,7 @@ export const PANEL_CSS = `
 }
 .vcp-queue strong { display: block; color: var(--vcp-text); font-size: 13px; line-height: 1.1; }
 .vcp-control-label { display: flex; justify-content: space-between; color: var(--vcp-muted); font-size: 11px; }
-.vcp-control-label strong { color: var(--vcp-text); font-weight: 620; }
+.vcp-control-label strong { color: var(--vcp-text); font-weight: 600; }
 .vcp-volume {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -185,7 +195,7 @@ export const PANEL_CSS = `
   border-radius: 10px;
   padding: 7px 11px;
   font: inherit;
-  font-weight: 570;
+  font-weight: 500;
   cursor: pointer;
   transition: transform .14s ease, background .14s ease, border-color .14s ease, box-shadow .14s ease;
 }
@@ -200,6 +210,13 @@ export const PANEL_CSS = `
 }
 .vcp-btn.primary:hover:not([disabled]) { background: linear-gradient(135deg, #7869ff, #5b49ef); border-color: transparent; }
 .vcp-btn.danger:hover:not([disabled]) { color: #d84657; border-color: rgba(216, 70, 87, .2); background: rgba(216, 70, 87, .06); }
+.vcp-btn:focus-visible,
+.vcp-pill:focus-visible,
+.vcp-icon-btn:focus-visible,
+.vcp-slider:focus-visible {
+  outline: 2px solid var(--vcp-accent);
+  outline-offset: 2px;
+}
 .vcp-slider {
   width: 100%;
   height: 4px;
@@ -216,6 +233,7 @@ export const PANEL_CSS = `
 }
 .vcp-dot.err { background: #ea6070; box-shadow: 0 0 0 3px rgba(234, 96, 112, .12); }
 .vcp-dot.warn { background: #e8ad35; box-shadow: 0 0 0 3px rgba(232, 173, 53, .13); }
+.vcp-dot.idle { background: #9aa0ae; box-shadow: 0 0 0 3px rgba(154, 160, 174, .14); }
 .vcp-now-playing {
   display: flex;
   align-items: center;
@@ -250,17 +268,17 @@ export const PANEL_CSS = `
   outline: none;
   list-style: none;
   font-size: 11px;
-  font-weight: 560;
+  font-weight: 500;
 }
 .vcp-details summary::-webkit-details-marker { display: none; }
 .vcp-details summary::after { content: '＋'; float: right; color: var(--vcp-muted); }
 .vcp-details[open] summary::after { content: '−'; }
 .vcp-details > div { padding: 0 15px 12px; }
 .vcp-onboarding {
-  position: fixed;
-  right: 20px;
-  bottom: 76px;
-  z-index: 2147483001;
+  /* 锚定在胶囊正上方，跟随拖动后的位置，不再固定死在右下角。 */
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 12px);
   width: 280px;
   max-width: calc(100vw - 32px);
   border-radius: 16px;
@@ -303,7 +321,7 @@ export const PANEL_CSS = `
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vcp-text);
-  font-weight: 640;
+  font-weight: 600;
 }
 .vcp-profiles-note { color: var(--vcp-muted); font-size: 11px; padding: 3px 2px; }
 .vcp-profiles-error {
@@ -368,6 +386,19 @@ export const PANEL_CSS = `
     --vcp-muted: #9b9daa;
     --vcp-shadow: 0 20px 54px rgba(0, 0, 0, .42), 0 3px 12px rgba(0, 0, 0, .28);
   }
+}
+
+/* 应用显式选择浅色主题时覆盖 OS 深色偏好（避免"应用浅色、面板深色"的错位）。 */
+.light .vcp-root,
+[data-theme='light'] .vcp-root {
+  --vcp-bg: rgba(255, 255, 255, .96);
+  --vcp-surface: #f7f7fa;
+  --vcp-surface-hover: #f0eff7;
+  --vcp-border: rgba(30, 32, 42, .09);
+  --vcp-divider: rgba(30, 32, 42, .07);
+  --vcp-text: #20212a;
+  --vcp-muted: #767887;
+  --vcp-shadow: 0 18px 48px rgba(20, 22, 32, .16), 0 3px 12px rgba(20, 22, 32, .08);
 }
 `
 
