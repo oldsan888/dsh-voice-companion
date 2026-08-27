@@ -196,6 +196,26 @@ describe('profiles store', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  it('删除历史音色后清理回滚链，不再回滚到已删除项或当前内置音色', () => {
+    const root = tempRoot()
+    const store = createProfilesStore({ root })
+    store.registerBuiltin({ name: '内置', reference: { fileName: 'b.wav', buffer: makeWav(512) } })
+    store.importReference({ id: 'a', name: '音色 A', kind: 'design', buffer: makeWav(512), fileName: 'a.wav' })
+    store.importReference({ id: 'b', name: '音色 B', kind: 'design', buffer: makeWav(512), fileName: 'b.wav' })
+
+    store.activate(BUILTIN_PROFILE_ID)
+    store.activate('a')
+    store.activate(BUILTIN_PROFILE_ID)
+    expect(store.activeState()).toMatchObject({ activeId: BUILTIN_PROFILE_ID, previousId: 'a' })
+
+    expect(store.delete('a').ok).toBe(true)
+    expect(store.delete('b').ok).toBe(true)
+    expect(store.activeState()).toMatchObject({ activeId: BUILTIN_PROFILE_ID, previousId: null, history: [] })
+    expect(store.rollback()).toMatchObject({ ok: false, code: 'NO_PREVIOUS' })
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
   it('激活不存在/已删除 → 错误码', () => {
     const root = tempRoot()
     const store = createProfilesStore({ root })

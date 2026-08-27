@@ -1,34 +1,21 @@
 /** HTTP 路由测试：方法/状态/头/限长/错误码/租约门禁/二进制 WAV/disposer。 */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { invokeRoute, makeFakeHostCtx, makeWav } from './host-test-utils.ts'
 import { apply } from '../src/server/index.ts'
 import type { MiMoTts } from '../src/server/tts.ts'
 import { ROUTES } from '../src/shared/constants.ts'
-import { BUILTIN_PROFILE_ID, resolveProfilesRoot } from '../src/server/profiles.ts'
+import { BUILTIN_PROFILE_ID } from '../src/server/profiles.ts'
 
 const SECRETS_FILE = join(process.env.DSH_HOME ?? 'E:\\test-dsh-home', 'secrets', 'dsh-voice-companion.env')
 
-/**
- * 复位真实 DSH_HOME 语音身份到 http.test.ts 期望的干净基线
- * （active-profile.json activeId=null + 内置 status=inactive）：
- * `profiles/activate`（回退内置）测试会激活内置并留在磁盘，若不复位，
- * 同文件后续测试与下一次全量运行都会因读到脏状态而失败。
- */
-function resetVoiceBaseline(): void {
-  try {
-    const root = resolveProfilesRoot()
-    writeFileSync(join(root, 'active-profile.json'),
-      JSON.stringify({ activeId: null, previousId: null, history: [], updatedAt: Date.now() }, null, 2), 'utf8')
-    const profilePath = join(root, 'profiles', BUILTIN_PROFILE_ID, 'profile.json')
-    const profile = JSON.parse(readFileSync(profilePath, 'utf8')) as Record<string, unknown>
-    profile.status = 'inactive'
-    writeFileSync(profilePath, JSON.stringify(profile, null, 2), 'utf8')
-  } catch {
-    // 真实根不可用时保持原状（测试只做尽力复位）。
-  }
-}
+const profileRoots: string[] = []
+
+afterEach(() => {
+  for (const root of profileRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
 
 function fakeTts(overrides?: Partial<MiMoTts>): MiMoTts {
   return {
@@ -44,12 +31,14 @@ function fakeTts(overrides?: Partial<MiMoTts>): MiMoTts {
 
 function setup(tts?: MiMoTts) {
   const host = makeFakeHostCtx()
+  const profilesRoot = mkdtempSync(join(tmpdir(), 'dsh-voice-http-'))
+  profileRoots.push(profilesRoot)
   apply(host.ctx as never, {
     secretsFile: SECRETS_FILE,
     promptEnabled: false,
     // 单测不触发真实 lark-cli/ffmpeg 进程（隔离验证由 lark.test.ts 专项覆盖）。
     larkEnabled: false,
-  }, tts === undefined ? {} : { tts })
+  }, { ...(tts === undefined ? {} : { tts }), profilesRoot })
   const routes = host.routes
   return { host, route: (path: string) => routes.get(path)! }
 }
@@ -338,8 +327,6 @@ describe('profiles 路由', () => {
     // 内置兜底可作为默认音色被选回（回退内置）→ 200。
     const res = await invokeRoute(route(ROUTES.profilesActivate), { method: 'POST', body: { clientId: 'tab-a', id: BUILTIN_PROFILE_ID } })
     expect(res.status).toBe(200)
-    // 复位干净基线（activeId=null + 内置 inactive），避免污染后续测试与下次运行。
-    resetVoiceBaseline()
   })
 
   it('profiles/activate：越界 id → 400 INVALID_ID（路径穿越被安全ProfileId拦截）', async () => {

@@ -15,6 +15,10 @@ async function parseJsonResponse<T>(response: Response): Promise<ApiResult<T>> {
     if (!response.ok && error && typeof error.code === 'string') {
       return { ok: false, code: error.code as ErrorCode, message: String(error.message ?? '') }
     }
+    // Profile mutation 路由使用顶层 errorCode/message，兼容其业务错误格式。
+    if (!response.ok && typeof body.errorCode === 'string') {
+      return { ok: false, code: body.errorCode as ErrorCode, message: String(body.message ?? '') }
+    }
     if (!response.ok) {
       return { ok: false, code: 'NETWORK', message: `HTTP ${response.status}` }
     }

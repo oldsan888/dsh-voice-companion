@@ -268,6 +268,24 @@ describe('createMiMoTts', () => {
     await expect(tts.synthesize('x', controller.signal)).rejects.toMatchObject({ code: 'TTS_UNAVAILABLE' })
   })
 
+  it('请求进行中被下游中止：fetch 抛出 reason 也不污染 TTS 健康状态', async () => {
+    let notifyStarted!: () => void
+    const started = new Promise<void>(resolve => { notifyStarted = resolve })
+    const { tts } = makeTts({
+      fetchImpl: fakeFetchWith((_url, init) => new Promise<Response>((_resolve, reject) => {
+        notifyStarted()
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+      })),
+    })
+    const controller = new AbortController()
+    const pending = tts.synthesize('x', controller.signal)
+    await started
+    controller.abort(new Error('downstream'))
+    await expect(pending).rejects.toMatchObject({ code: 'TTS_UNAVAILABLE', message: '请求已中止' })
+    expect(tts.health().status).toBe('ready')
+    expect(tts.health().detail).toBeUndefined()
+  })
+
   it('超限音频 → AUDIO_TOO_LARGE；非 WAV → INVALID_AUDIO', async () => {
     const big = makeTts({
       config: { maxAudioBytes: 100 },

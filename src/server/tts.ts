@@ -564,18 +564,19 @@ export function createMiMoTts(config: MiMoTtsConfig, deps: MiMoTtsDeps): MiMoTts
       if (!sawAudio) throw new TtsError('TTS_REJECTED', 'MiMo 流式响应中没有音频数据')
       note('ready')
     } catch (error) {
-      if (error instanceof TtsError) {
-        note('error', error.message)
-        throw error
-      }
-      const aborted = error instanceof Error && error.name === 'AbortError'
+      const aborted = controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')
       const reason = (controller.signal.reason as Error | undefined)?.message
       if (aborted && reason === 'timeout') {
         const timeout = new TtsError('TTS_TIMEOUT', `MiMo 流式请求超时（${config.requestTimeoutMs}ms）`)
         note('error', timeout.message)
         throw timeout
       }
+      // 下游主动断开/客户端抢占不是 MiMo 故障，不污染健康状态。
       if (aborted) throw new TtsError('TTS_UNAVAILABLE', '请求已中止')
+      if (error instanceof TtsError) {
+        note('error', error.message)
+        throw error
+      }
       const message = error instanceof Error ? `${error.name}: ${error.message.slice(0, 80)}` : '网络错误'
       const unavailable = new TtsError('TTS_UNAVAILABLE', `无法连接 MiMo API（${message}）`)
       note('error', unavailable.message)
@@ -634,18 +635,19 @@ export function createMiMoTts(config: MiMoTtsConfig, deps: MiMoTtsDeps): MiMoTts
       note('ready')
       return audio
     } catch (error) {
-      if (error instanceof TtsError) {
-        note('error', error.message)
-        throw error
-      }
-      const aborted = error instanceof Error && error.name === 'AbortError'
+      const aborted = controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')
       const reason = (controller.signal.reason as Error | undefined)?.message
       if (aborted && reason === 'timeout') {
         const timeout = new TtsError('TTS_TIMEOUT', `MiMo 请求超时（${config.requestTimeoutMs}ms）`)
         note('error', timeout.message)
         throw timeout
       }
+      // fetch 可能直接抛出 AbortSignal.reason（Error: downstream），不能当成网络故障。
       if (aborted) throw new TtsError('TTS_UNAVAILABLE', '请求已中止')
+      if (error instanceof TtsError) {
+        note('error', error.message)
+        throw error
+      }
       const message = error instanceof Error ? `${error.name}: ${error.message.slice(0, 80)}` : '网络错误'
       const unavailable = new TtsError('TTS_UNAVAILABLE', `无法连接 MiMo API（${message}）`)
       note('error', unavailable.message)

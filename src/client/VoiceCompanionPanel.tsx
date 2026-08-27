@@ -445,6 +445,7 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
   const testVoice = useCallback(async (): Promise<void> => {
     const player = playerRef.current
     if (player === undefined) return
+    setLastError(undefined)
     await unlockAudio()
     const controller = new AbortController()
     // 显式试听接管本地播放器；清掉已从 Host 领取但尚未播放的旧事件，
@@ -459,7 +460,8 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
       setActivityPhase('synthesizing')
       const outcome = await api.requestTestVoice(clientId, controller.signal)
       if (!outcome.ok) {
-        setLastError(`试听失败[${outcome.code}]：${outcome.message}`)
+        // 被音色参考试听或其它高优先级操作抢占属于正常取消，不向用户报错。
+        if (!controller.signal.aborted) setLastError(`试听失败[${outcome.code}]：${outcome.message}`)
         return
       }
       // 试听优先级最高：不受队列影响，但尊重音量。
@@ -505,6 +507,7 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
   const previewProfile = useCallback(async (id: string): Promise<void> => {
     const player = playerRef.current
     if (player === undefined || !isLeader) return
+    setLastError(undefined)
     await unlockAudio()
     const controller = new AbortController()
     // 与显式试听一致：接管播放器并清掉尚未播放的旧事件，避免队列协程并发恢复。
@@ -519,7 +522,7 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
       setActivityPhase('synthesizing')
       const outcome = await api.getProfileReference(id, clientId, controller.signal)
       if (!outcome.ok) {
-        setLastError(`试听失败[${outcome.code}]：${outcome.message}`)
+        if (!controller.signal.aborted) setLastError(`试听失败[${outcome.code}]：${outcome.message}`)
         return
       }
       setActivityPhase('playing')
@@ -538,7 +541,8 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
 
   /** 点击启用：先弹确认，再执行激活。 */
   const requestActivate = useCallback((profile: VoiceProfileSummary): void => {
-    if (!isLeader || profile.readOnly || profileBusy !== undefined) return
+    // readOnly 只表示音色内容不可修改/删除；内置音色仍必须能被重新选为默认。
+    if (!isLeader || profileBusy !== undefined) return
     setConfirmActivate(profile)
   }, [isLeader, profileBusy])
 
@@ -683,18 +687,18 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
   // ---- 派生显示 ----
   const ttsStatus = serverState?.tts.status
   const pillText = prefs.muted
-    ? '🔇 已静音'
+    ? '已静音'
     : activityPhase === 'synthesizing'
       ? '合成中'
       : activityPhase === 'playing'
         ? '播放中'
         : !audioReady
-          ? '▶ 点击启用'
+          ? '点击启用'
           : ttsStatus === 'ready'
             ? '空闲中'
             : ttsStatus === 'unconfigured'
-              ? '⚠ TTS 未配置'
-              : '⚠ TTS 离线'
+              ? 'TTS 未配置'
+              : 'TTS 离线'
   // 静音/未解锁不该显示绿色"正常"圆点：静音与待启用用中性灰。
   const pillDotClass = prefs.muted || !audioReady
     ? 'vcp-dot idle'
@@ -724,10 +728,17 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
   const canRollback = Boolean(activeState?.previousId)
   const anyProfileBusy = profileBusy !== undefined || previewId !== undefined
   const profilesDisabled = !isLeader || anyProfileBusy
+  const rootClass = [
+    'vcp-root',
+    dragging ? 'dragging' : '',
+    prefs.muted ? 'is-muted' : '',
+    activityPhase === 'synthesizing' ? 'is-synthesizing' : '',
+    activityPhase === 'playing' ? 'is-playing' : '',
+  ].filter(Boolean).join(' ')
 
   return (
     <div
-      className={`vcp-root${dragging ? ' dragging' : ''}`}
+      className={rootClass}
       ref={rootRef}
       style={prefs.panelPos !== undefined
         ? { left: prefs.panelPos.x, top: prefs.panelPos.y, right: 'auto', bottom: 'auto' }
@@ -735,8 +746,8 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
     >
       {!prefs.onboardingSeen && (
         <div className='vcp-onboarding' data-testid='voice-onboarding'>
-          <strong>让 DSH 开口说话</strong>
-          <p>启用声音后，任务完成、提问和异常状态都能及时播报。</p>
+          <strong>打开声音</strong>
+          <p>任务完成、提问和异常会用语音提醒。</p>
           <button
             type='button' className='vcp-btn primary' data-testid='voice-onboarding-enable'
             onClick={() => { void unlockAudio(); updatePrefs({ onboardingSeen: true }) }}
@@ -756,16 +767,19 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
             title='按住拖动面板'
           >
             <span className='vcp-brandmark' aria-hidden='true'>
-              <i /><i /><i /><i /><i />
+              <i className='vcp-voice-core' />
+              <i className='vcp-voice-wave inner' />
+              <i className='vcp-voice-wave outer' />
             </span>
             <div className='vcp-heading'>
-              <div className='vcp-title'>语音插件</div>
-              <div className='vcp-subtitle'>DSH 的语音播报控制台</div>
+              <div className='vcp-title'>语音</div>
+              <div className='vcp-subtitle'>
+                <span className='vcp-leader'>
+                  <span className={isLeader ? 'vcp-dot' : 'vcp-dot idle'} />
+                  {isLeader ? '本页播放' : '另一个标签页播放'}
+                </span>
+              </div>
             </div>
-            <span className='vcp-leader'>
-              <span className='vcp-dot' />
-              {isLeader ? '本页播放' : '另一个标签页播放'}
-            </span>
             <button type='button' className='vcp-icon-btn' data-vcp-nodrag onClick={collapsePanel} title='收起' aria-label='收起面板'>
               <span aria-hidden='true'>×</span><span className='vcp-sr-only'>收起</span>
             </button>
@@ -977,7 +991,11 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
           }}
           title='语音插件（可拖动）'
         >
-          <span className='vcp-brandmark' aria-hidden='true'><i /><i /><i /><i /><i /></span>
+          <span className='vcp-brandmark' aria-hidden='true'>
+            <i className='vcp-voice-core' />
+            <i className='vcp-voice-wave inner' />
+            <i className='vcp-voice-wave outer' />
+          </span>
           <span className='vcp-pill-label' data-testid='voice-pill-label'>{pillText}</span>
           <span className={pillDotClass} />
           {!isLeader && audioReady && <span className='vcp-sr-only'>另一个标签页播放中</span>}

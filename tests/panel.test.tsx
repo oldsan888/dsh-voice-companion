@@ -331,7 +331,7 @@ describe('高优先级打断（player 规则）', () => {
     await player.dispose()
   })
 
-  it('序列播放：stopCurrent 停掉全部已排程 source（不留幽灵音频），排程完毕后打断也能 resolve', async () => {
+  it('序列播放：后一段严格等待前一段结束，不会重叠；打断后 Promise 正常 resolve', async () => {
     const sources: FakeSourceNode[] = []
     class SeqContext extends FakeAudioContext {
       currentTime = 0
@@ -352,11 +352,18 @@ describe('高优先级打断（player 规则）', () => {
       yield new ArrayBuffer(8)
     }
     const promise = player.playWavSequence(segments(), 2)
-    // 等循环把三段全部 decode 并排程。
-    await waitFor(() => expect(sources).toHaveLength(3))
-    // 打断：三段（含未来排程的两段）必须全部被 stop，Promise 必须 resolve 而非悬挂。
+    await waitFor(() => expect(sources).toHaveLength(1))
+    expect(sources[0].started).toBe(true)
+    // 第一段未结束时，第二段绝不能创建或启动。
+    await new Promise(resolve => setTimeout(resolve, 5))
+    expect(sources).toHaveLength(1)
+    sources[0].onended?.()
+    await waitFor(() => expect(sources).toHaveLength(2))
+    expect(sources[1].started).toBe(true)
+    expect(sources[0].stopped).toBe(0)
+    // 第二段播放中打断：当前 source 被停止，Promise 必须 resolve 而非悬挂。
     player.stopCurrent()
-    for (const source of sources) expect(source.stopped).toBe(1)
+    expect(sources[1].stopped).toBe(1)
     const outcome = await promise
     expect(outcome).toEqual({ started: true, reason: 'interrupted' })
     await player.dispose()
@@ -475,7 +482,7 @@ describe('音色 Profile 面板', () => {
     expect(screen.getByTestId('voice-current-voice').textContent).toBe('未设置')
   })
 
-  it('列表渲染多个音色，当前音色名与当前徽标正确；内置只读不可启用', async () => {
+  it('列表渲染多个音色，当前音色名与当前徽标正确；内置只读但可回退启用', async () => {
     const profiles = [
       profile({ id: 'builtin-adai-design-1', name: '阿呆·设计音色-1', kind: 'builtin', readOnly: true, approved: true }),
       profile({ id: 'p1', name: '女声 A', kind: 'design', active: true }),
@@ -491,6 +498,31 @@ describe('音色 Profile 面板', () => {
     expect(screen.getByTestId('voice-profiles').textContent).toContain('内置')
     // 有上一版本 → 可回滚
     expect((screen.getByTestId('voice-profile-rollback') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('启用自定义音色后可重新启用只读的内置默认音色', async () => {
+    const builtin = profile({
+      id: 'builtin-adai-design-1',
+      name: '阿呆·设计音色-1',
+      kind: 'builtin',
+      readOnly: true,
+      approved: true,
+    })
+    const custom = profile({ id: 'custom-1', name: '新设计音色', kind: 'design', active: true })
+    const api = leaderApi({
+      listProfiles: vi.fn(async () => ({
+        ok: true as const,
+        value: profilesResponse([builtin, custom], { activeId: 'custom-1', previousId: null, history: [] }),
+      })),
+      activateProfile: vi.fn(async () => ({ ok: true as const, value: { protocolVersion: 1, ok: true, active: null } })),
+    })
+
+    await openPanel(api, true)
+    await waitFor(() => expect(screen.getByTestId('voice-profile-enable-builtin-adai-design-1')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('voice-profile-enable-builtin-adai-design-1'))
+    expect(screen.getByTestId('voice-profile-confirm').textContent).toContain('阿呆·设计音色-1')
+    fireEvent.click(screen.getByTestId('voice-profile-activate-confirm'))
+    await waitFor(() => expect(api.activateProfile).toHaveBeenCalledWith('builtin-adai-design-1', expect.any(String)))
   })
 
   it('加载状态显示 loading 文案后再出数据', async () => {
@@ -620,6 +652,28 @@ describe('音色 Profile 面板', () => {
     fireEvent.click(screen.getByTestId('voice-profile-preview-p1'))
     await waitFor(() => expect(api.getProfileReference).toHaveBeenCalledWith('p1', expect.any(String), expect.anything()))
     await waitFor(() => expect(screen.getByTestId('voice-profile-preview-p1').textContent).toBe('试听'))
+  })
+
+  it('实时合成中点击音色试听：正常抢占并播放参考音频，不显示取消错误', async () => {
+    let liveSignal: AbortSignal | undefined
+    const api = leaderApi({
+      listProfiles: vi.fn(async () => ({ ok: true as const, value: profilesResponse([profile({ id: 'p1' })]) })),
+      requestTestVoice: vi.fn((_clientId: string, signal?: AbortSignal) => new Promise(resolve => {
+        liveSignal = signal
+        signal?.addEventListener('abort', () => resolve({ ok: false as const, code: 'TTS_TIMEOUT' as const, message: '合成已取消' }), { once: true })
+      })),
+      getProfileReference: vi.fn(async () => ({ ok: true as const, value: new ArrayBuffer(8) })),
+    })
+    await openPanel(api, true)
+    await waitFor(() => expect(screen.getByTestId('voice-profile-row-p1')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('voice-test'))
+    await waitFor(() => expect(api.requestTestVoice).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('voice-profile-preview-p1'))
+
+    await waitFor(() => expect(liveSignal?.aborted).toBe(true))
+    await waitFor(() => expect(api.getProfileReference).toHaveBeenCalledWith('p1', expect.any(String), expect.anything()))
+    expect(screen.queryByText(/TTS_TIMEOUT|合成已取消|downstream/)).toBeNull()
   })
 })
 

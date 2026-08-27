@@ -313,9 +313,15 @@ export function createProfilesStore(input: { root: string; now?: () => number })
 
   function activeState(): ActiveProfileState {
     const raw = readJson<Partial<ActiveProfileState>>(activeFile ?? '')
-    const history = Array.isArray(raw?.history) ? raw.history.filter((x): x is string => typeof x === 'string') : []
+    const activeId = typeof raw?.activeId === 'string' ? raw.activeId : null
+    // 兼容旧版本遗留的脏历史：被删除/非法的 Profile 不再构成可回滚目标。
+    const history = Array.isArray(raw?.history)
+      ? raw.history.filter((x): x is string => typeof x === 'string' && safeProfileId(x) !== undefined && parseProfile(x) !== undefined)
+      : []
+    // 手动切回较早音色后，历史中可能残留当前 activeId；尾项回滚到自身没有意义。
+    while (history.length > 0 && history[history.length - 1] === activeId) history.pop()
     return {
-      activeId: typeof raw?.activeId === 'string' ? raw.activeId : null,
+      activeId,
       previousId: history.length > 0 ? history[history.length - 1] : null,
       history,
       updatedAt: typeof raw?.updatedAt === 'number' ? raw.updatedAt : 0,
@@ -534,6 +540,15 @@ export function createProfilesStore(input: { root: string; now?: () => number })
       if (state.activeId === safe) return { ok: false, code: 'ACTIVE', message: '不能删除当前激活的音色' }
       const dir = safeJoin(profilesDir, safe)
       if (dir) rmSync(dir, { recursive: true, force: true })
+      // 删除也必须同步清理回滚链；并去掉清理后落在尾部的当前音色。
+      const history = state.history.filter(id => id !== safe)
+      while (history.length > 0 && history[history.length - 1] === state.activeId) history.pop()
+      writeActive({
+        activeId: state.activeId,
+        previousId: history.length > 0 ? history[history.length - 1] : null,
+        history,
+        updatedAt: now(),
+      })
       return { ok: true, value: { deletedId: safe } }
     },
   }
