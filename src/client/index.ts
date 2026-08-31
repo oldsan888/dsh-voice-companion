@@ -4,6 +4,8 @@
  * 插件卸载/HMR 时自动移除）。
  */
 import type { Context } from '@deepseek-ai/cordis'
+// Loads the official shell.overlay SlotMap row and ctx.slots service types.
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import { PANEL_SLOT_ID } from '../shared/constants.ts'
 import { VoiceCompanionPanel } from './VoiceCompanionPanel.tsx'
 import { injectPanelStyles } from './styles.ts'

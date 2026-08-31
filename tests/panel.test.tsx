@@ -801,6 +801,39 @@ describe('Phase 3：速度优先模式与句子级流水（播放模式）', () 
     expect(screen.getByTestId('voice-panel')).toBeTruthy()
   })
 
+  it('靠近右下角的胶囊展开后再收起，精确回到原位置', () => {
+    window.localStorage.setItem('dsh.voice-companion.preferences.v1', JSON.stringify({
+      muted: false, volume: 0.9, collapsed: true, onboardingSeen: true,
+      mode: 'identity', panelPos: { x: 850, y: 700 },
+    }))
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+
+    render(<VoiceCompanionPanel apiOverride={okApi() as never} intervals={{ drainMs: 10_000, renewMs: 10_000, stateMs: 10_000 }} />)
+    const root = screen.getByTestId('voice-pill').parentElement as HTMLElement
+    const dimensions = () => root.querySelector('[data-testid="voice-panel"]')
+      ? { width: 320, height: 600 }
+      : { width: 120, height: 36 }
+    Object.defineProperty(root, 'offsetWidth', { configurable: true, get: () => dimensions().width })
+    Object.defineProperty(root, 'offsetHeight', { configurable: true, get: () => dimensions().height })
+    root.getBoundingClientRect = vi.fn(() => {
+      const { width, height } = dimensions()
+      const left = Number.parseFloat(root.style.left)
+      const top = Number.parseFloat(root.style.top)
+      return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height, toJSON: () => ({}) } as DOMRect
+    })
+
+    fireEvent.click(screen.getByTestId('voice-pill'))
+    expect(root.style.left).toBe('650px')
+    expect(root.style.top).toBe('136px')
+
+    fireEvent.click(screen.getByLabelText('收起面板'))
+    expect(root.style.left).toBe('850px')
+    expect(root.style.top).toBe('700px')
+    const saved = JSON.parse(window.localStorage.getItem('dsh.voice-companion.preferences.v1')!) as { panelPos?: { x: number; y: number } }
+    expect(saved.panelPos).toEqual({ x: 850, y: 700 })
+  })
+
   it('微小位移（<4px）视为点击：不改变位置，正常展开', () => {
     const api = okApi()
     render(<VoiceCompanionPanel apiOverride={api as never} intervals={{ drainMs: 10_000, renewMs: 10_000, stateMs: 10_000 }} />)

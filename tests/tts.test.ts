@@ -438,6 +438,12 @@ describe('Host 配置', () => {
     expect(result.ok).toBe(true)
     expect(result.ok && result.config.speed).toBe(0.75)
   })
+
+  it('profile 只覆写 secretsFile 时，飞书投递仍默认关闭', () => {
+    const result = validateVoiceConfig({ secretsFile: 'E:\\dsh-home\\secrets\\voice.env' }, { DSH_HOME: 'E:\\dsh-home' })
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.config.larkEnabled).toBe(false)
+  })
 })
 
 describe('secrets 解析', () => {

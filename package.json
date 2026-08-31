@@ -1,9 +1,16 @@
 {
   "name": "@oldsan888/dsh-voice-companion",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "DSH 语音插件（Profile Bundle）：完成/提问/失败三通道播报 + 右下角全局语音面板。Host 内置 MiMo 云端 TTS Provider（随包携带阿呆参考音频，凭据走 dsh-home secrets），运行时零依赖本地 TTS 服务。",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oldsan888/dsh-voice-companion.git"
+  },
   "type": "module",
-  "private": true,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
@@ -17,7 +24,9 @@
     "lib/*.js.map",
     "assets/voice-reference.wav",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "docs/*.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -25,7 +34,7 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-ui-layout"
       ],
       "platform": "web"
@@ -39,12 +48,23 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.0",
-    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2"
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-client-ui-layout": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-host-webserver": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-session": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-system-prompt": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2 || 0.1.2-alpha.1"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.0",
-    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-client-ui-layout": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-host-webserver": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-invariants": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-session": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-system-prompt": "0.1.1-rc.2 || 0.1.2-alpha.1",
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2 || 0.1.2-alpha.1",
     "@testing-library/react": "^16.1.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.12",

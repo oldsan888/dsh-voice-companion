@@ -15,6 +15,9 @@
         provider: 'mimo'
         model: 'mimo-v2.5-tts-voiceclone'
         designModel: 'mimo-v2.5-tts-voicedesign'
+        streamModel: 'mimo-v2.5-tts'
+        presetVoiceId: '冰糖'
+        streamChunkMs: 1000
         speed: 1
         maxLineChars: 150
         askMaxChars: 80

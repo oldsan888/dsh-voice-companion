@@ -53,7 +53,8 @@ describe('包清单契约', () => {
     expect(manifest.name).toBe('@oldsan888/dsh-voice-companion')
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
     expect(manifest.dsh.client.platform).toBe('web')
-    expect(manifest.dsh.client.inject).toContain('@deepseek-ai/dsh-client-runtime')
+    expect(manifest.dsh.client.inject).not.toContain('@deepseek-ai/dsh-client-runtime')
+    expect(manifest.dsh.client.inject).toContain('@deepseek-ai/dsh-client-ui-slots')
     expect(manifest.dsh.client.inject).toContain('@deepseek-ai/dsh-client-ui-layout')
     expect(manifest.exports['./client']).toBe('./lib/client.js')
     expect(manifest.exports['./server']).toBe('./lib/server.js')
@@ -63,6 +64,24 @@ describe('包清单契约', () => {
     const manifestFiles = manifest.files ?? []
     expect(manifestFiles.some(entry => entry.includes('assets/voice-reference.wav'))).toBe(true)
     expect(existsSync(join(PKG_ROOT, 'assets', 'voice-reference.wav'))).toBe(true)
+  })
+
+  it('公开包声明仓库、宿主 peers 与公开文档', () => {
+    const publicManifest = manifest as typeof manifest & {
+      private?: boolean
+      repository?: { url?: string }
+      peerDependencies?: Record<string, string>
+    }
+    expect(publicManifest.private).toBe(false)
+    expect(publicManifest.repository?.url).toContain('oldsan888/dsh-voice-companion')
+    expect(publicManifest.peerDependencies).toMatchObject({
+      '@deepseek-ai/dsh-client-ui-slots': expect.any(String),
+      '@deepseek-ai/dsh-host-webserver': expect.any(String),
+      '@deepseek-ai/dsh-session': expect.any(String),
+      '@deepseek-ai/dsh-system-prompt': expect.any(String),
+      '@deepseek-ai/dsh-tools': expect.any(String),
+    })
+    expect(publicManifest.files).toContain('docs/*.md')
   })
 })
 

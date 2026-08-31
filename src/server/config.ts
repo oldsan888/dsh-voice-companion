@@ -34,7 +34,7 @@ export interface VoicePluginConfig {
   /** 设计描述 prompt 的最大长度（Unicode code point）。 */
   maxDesignPromptChars: number
   promptEnabled: boolean
-  /** 飞书投递（Phase 4，可选适配器）：false 时彻底禁用；默认 true（自动探测 lark-cli）。 */
+  /** 飞书投递（Phase 4，可选适配器）：false 时彻底禁用；默认 false，必须显式启用。 */
   larkEnabled: boolean
   /** 飞书默认投递目标（chat_id/open_id）；空 = 工具必须显式传 chatId。 */
   larkDefaultChatId: string
@@ -70,7 +70,8 @@ const DEFAULTS = {
   maxDesignCandidates: 3,
   maxDesignPromptChars: 300,
   promptEnabled: true,
-  larkEnabled: true,
+  // 外部投递必须显式启用；profile config 替换 bundle config 时也保持安全默认。
+  larkEnabled: false,
   larkDefaultChatId: '',
   larkMaxAttempts: 3,
   larkRetryBaseMs: 500,

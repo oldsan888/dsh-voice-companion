@@ -11,6 +11,10 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
+// Type-only imports load the real DSH service/event declaration merges.
+import type {} from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { ROUTES, TEST_TEXT } from '../shared/constants.ts'
 import type { VoiceKind } from '../shared/constants.ts'
@@ -202,10 +206,12 @@ export function apply(ctx: Context, rawConfig: unknown = {}, overrides: ApplyOve
   }
 
   // ---- 完成通道 + 最终失败通道：全局 session/event ----
-  ctx.on('session/event', (session: unknown, event: { type?: string; data?: Record<string, unknown> }) => {
+  ctx.on('session/event', (session, event) => {
     try {
-      const data = event?.data
-      if (data === undefined || typeof data !== 'object') return
+      // Keep the listener on DSH's exact SessionEvent contract; normalize the
+      // heterogeneous event payload only at this dynamic extraction boundary.
+      const data = asRecord(event.data)
+      if (data === undefined) return
       const type = event.type
       const turn = typeof data.turn === 'number' ? data.turn : undefined
 
@@ -755,7 +761,7 @@ export function apply(ctx: Context, rawConfig: unknown = {}, overrides: ApplyOve
   }))
 
   // ---- 提问通道：全局 tools/execute waterfall（必须在 next() 前入队，且必须委托 next()）----
-  ctx.on('tools/execute', async (exec: { name: string; callId: string; arguments: unknown }, next: () => Promise<unknown>) => {
+  ctx.on('tools/execute', async (exec, next) => {
     try {
       const ask = extractAsk(exec, config.askMaxChars)
       if (ask !== undefined) enqueue('ask', ask.text, ask.sourceKey)

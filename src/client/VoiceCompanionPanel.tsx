@@ -42,6 +42,13 @@ const PROFILE_KIND_LABEL: Record<VoiceProfileSummary['kind'], string> = {
 
 type AudioActivityPhase = 'synthesizing' | 'playing'
 
+type PanelToggleAnchor = {
+  horizontal: 'left' | 'right'
+  vertical: 'top' | 'bottom'
+  x: number
+  y: number
+}
+
 export interface VoiceCompanionPanelProps {
   /** 测试注入点：覆盖网络 API（默认真实实现）。 */
   apiOverride?: Partial<typeof import('./api.ts')>
@@ -99,6 +106,11 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
   } | undefined>(undefined)
   /** 拖动结束后抑制紧随其后的 click（避免拖完误展开面板）。 */
   const suppressClickRef = useRef(false)
+  /** 尺寸切换时保持离视口最近的边角不动，避免右/下侧胶囊展开后跳位。 */
+  const toggleAnchorRef = useRef<PanelToggleAnchor | undefined>(undefined)
+  /** 未拖动展开面板时，收起后精确恢复展开前的胶囊位置。 */
+  const collapsedPosRef = useRef<{ x: number; y: number } | undefined>(undefined)
+  const pendingCollapsedRestoreRef = useRef<{ x: number; y: number } | undefined>(undefined)
   const leaderRef = useRef(false)
   const pumpingRef = useRef(false)
   const audioAbortRef = useRef<AbortController | undefined>(undefined)
@@ -593,15 +605,35 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
     void fetchProfiles()
   }, [expanded, fetchProfiles])
 
+  const captureToggleAnchor = useCallback((): void => {
+    const rect = rootRef.current?.getBoundingClientRect()
+    if (rect === undefined) return
+    const horizontal = rect.left + rect.width / 2 <= window.innerWidth / 2 ? 'left' : 'right'
+    const vertical = rect.top + rect.height / 2 <= window.innerHeight / 2 ? 'top' : 'bottom'
+    toggleAnchorRef.current = {
+      horizontal,
+      vertical,
+      x: horizontal === 'left' ? rect.left : rect.right,
+      y: vertical === 'top' ? rect.top : rect.bottom,
+    }
+  }, [])
+
   const expandPanel = useCallback((): void => {
+    const pos = prefsRef.current.panelPos
+    collapsedPosRef.current = pos === undefined ? undefined : { ...pos }
+    if (pos !== undefined) captureToggleAnchor()
     setExpanded(true)
     updatePrefs({ onboardingSeen: true, collapsed: false })
-  }, [updatePrefs])
+  }, [captureToggleAnchor, updatePrefs])
 
   const collapsePanel = useCallback((): void => {
+    const restore = collapsedPosRef.current
+    collapsedPosRef.current = undefined
+    if (restore !== undefined) pendingCollapsedRestoreRef.current = restore
+    else if (prefsRef.current.panelPos !== undefined) captureToggleAnchor()
     setExpanded(false)
     updatePrefs({ onboardingSeen: true, collapsed: true })
-  }, [updatePrefs])
+  }, [captureToggleAnchor, updatePrefs])
 
   // ---- 自由拖动（胶囊整体可拖；面板以头部为把手）----
   /** 把候选位置钳制在视口内（8px 边距；面板/胶囊尺寸实时测量）。 */
@@ -645,13 +677,15 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
       // 4px 阈值区分点击与拖动。
       if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return
       drag.moved = true
+      // 用户主动移动展开面板后，新位置应成为事实，不再恢复到展开前的胶囊位置。
+      if (expanded) collapsedPosRef.current = undefined
       setDragging(true)
     }
     const next = clampPos(drag.originX + dx, drag.originY + dy)
     drag.lastPos = next
     // 拖动过程只更新内存状态；localStorage 在 pointerup 时写一次。
     setPrefs(previous => ({ ...previous, panelPos: next }))
-  }, [clampPos])
+  }, [clampPos, expanded])
 
   const onDragPointerEnd = useCallback((event: React.PointerEvent<HTMLElement>): void => {
     const drag = dragRef.current
@@ -676,11 +710,22 @@ export function VoiceCompanionPanel({ apiOverride, intervals }: VoiceCompanionPa
     return () => window.removeEventListener('resize', onResize)
   }, [clampPos, updatePrefs])
 
-  // 展开/收起后尺寸变化（胶囊 → 336px 面板），同样需要钳回视口。
+  // 展开/收起后尺寸变化：保持最近边角；未拖动时收起精确回到原胶囊位置。
   useLayoutEffect(() => {
+    const element = rootRef.current
+    const restore = pendingCollapsedRestoreRef.current
+    pendingCollapsedRestoreRef.current = undefined
+    const anchor = toggleAnchorRef.current
+    toggleAnchorRef.current = undefined
     const pos = prefsRef.current.panelPos
-    if (pos === undefined) return
-    const next = clampPos(pos.x, pos.y)
+    if (pos === undefined || element === null) return
+    const candidate = restore ?? (anchor === undefined
+      ? pos
+      : {
+          x: anchor.horizontal === 'right' ? anchor.x - element.offsetWidth : anchor.x,
+          y: anchor.vertical === 'bottom' ? anchor.y - element.offsetHeight : anchor.y,
+        })
+    const next = clampPos(candidate.x, candidate.y)
     if (next.x !== pos.x || next.y !== pos.y) updatePrefs({ panelPos: next })
   }, [expanded, clampPos, updatePrefs])
 
