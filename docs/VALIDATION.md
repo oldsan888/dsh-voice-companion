@@ -5,11 +5,11 @@
 ## 验证基线
 
 - DSH：`0.1.2-alpha.1`。
-- 插件：`0.2.0`，从 GitHub 完整 commit SHA 安装。
+- 插件：`0.2.0`；功能代码验证 commit 为 `0d0a11014d9f5ce916a0b67672115d954570e143`。
 - 安装方式：全新隔离 `DSH_HOME`，不使用本地 `file:` 依赖。
 - 运行形态：DSH Web Profile Bundle。
 
-最终发布 commit SHA 将以本仓库默认分支和安装 lockfile 为准。
+验证时 `pnpm-lock.yaml` 固定到上述完整 SHA；后续纯文档提交不改变该运行代码结论。
 
 ## 自动化质量门
 
@@ -33,12 +33,17 @@
 - 鉴权后的 Web boot manifest 包含插件；client bundle 返回 200，并包含面板注册标识。
 - `/api/dsh-voice/state` 返回协议版本 1、空队列和 ready TTS。
 - 内置 Profile 可列出。
-- 真实 MiMo 试听请求返回 `audio/wav`，健康状态从 `notYetTested` 变为已验证 ready。
+- 真实 MiMo 试听请求返回 HTTP 200、`audio/wav` 和有效 RIFF/WAV；首次样本为 199,724 字节，健康状态从 `notYetTested` 变为已验证 ready。
 - profile 仅覆写 `secretsFile` 时，飞书投递仍保持默认关闭。
+
+真实 LLM 会话中，模型实际调用了一次 `voice_prepare`，收到成功工具结果，输出指定验证标记，并以 `completed` 结束回合；预合成完成播报随后进入语音队列。这证明了 `LLM → tools/execute → session/event → voice queue` 链路。
 
 ## 重启与隔离
 
-最终发布 SHA 的重启、持久化、事件播报和旧 Home 零写入结果会在远程复验完成后固化到本节。验收方法见 [安装与配置](INSTALLATION.md)。
+- 激活内置 Profile 后停止 DSH，并用同一 Home 重启。
+- 重启后 boot manifest 仍包含插件，激活 Profile 保持不变，飞书仍默认关闭。
+- 内存队列按设计在重启后为空；再次真实试听返回 HTTP 200 和有效 222,764 字节 RIFF/WAV。
+- 以最终候选首次启动时间为边界，排除 `node_modules` 检查 7 个旧 Home，均无文件写入；会话、投影缓存、Profile 和参考音频只写入目标 Home。
 
 ## 已解决问题
 
