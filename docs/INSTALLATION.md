@@ -71,6 +71,8 @@ pnpm dsh --profile web --dump-config
 | `DSH_VOICE_MIMO_API_BASE_URL` | `http`/`https` Base URL；不要带 query、fragment 或 `/chat/completions` 后缀。 |
 | `DSH_VOICE_MIMO_API_KEY` | MiMo API Key。 |
 
+MiMo 官方控制台：[小米 MiMo 开放平台](https://platform.xiaomimimo.com/console)
+
 推荐创建仅位于当前 Home 的文件：
 
 ```dotenv
